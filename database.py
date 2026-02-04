@@ -2,9 +2,9 @@ import asyncio
 from datetime import datetime
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import Integer, String, BigInteger, DateTime, ForeignKey, Text, Boolean, select, delete, func, update, or_
+from sqlalchemy import Integer, String, BigInteger, DateTime, ForeignKey, Text, Boolean, select, delete, func, update
 
-# БД
+# Используем абсолютный путь для надежности (хотя на хостинге и так корень)
 engine = create_async_engine("sqlite+aiosqlite:///bot.db", echo=False)
 new_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
@@ -22,7 +22,7 @@ class Note(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.telegram_id"))
     content: Mapped[str] = mapped_column(Text)
-    is_pinned: Mapped[bool] = mapped_column(Boolean, default=False)  # НОВОЕ
+    is_pinned: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(default=datetime.now)
 
 class Reminder(Base):
@@ -38,7 +38,7 @@ class Media(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.telegram_id"))
     file_id: Mapped[str] = mapped_column(String)
-    file_type: Mapped[str] = mapped_column(String)
+    file_type: Mapped[str] = mapped_column(String) # photo, video, document, voice
     caption: Mapped[str] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=datetime.now)
 
@@ -60,6 +60,15 @@ async def add_note(tg_id: int, content: str):
         await session.commit()
         return note.id
 
+async def get_all_notes_text(tg_id: int):
+    """Для экспорта в файл"""
+    async with new_session() as session:
+        notes = await session.scalars(select(Note).where(Note.user_id == tg_id).order_by(Note.created_at.desc()))
+        text_out = "ВАШИ ЗАМЕТКИ:\n====================\n\n"
+        for n in notes:
+            text_out += f"📅 {n.created_at.strftime('%d.%m.%Y %H:%M')}\n{n.content}\n--------------------\n\n"
+        return text_out
+
 async def update_note_text(note_id: int, new_text: str):
     async with new_session() as session:
         await session.execute(update(Note).where(Note.id == note_id).values(content=new_text))
@@ -69,10 +78,10 @@ async def toggle_pin(note_id: int):
     async with new_session() as session:
         note = await session.get(Note, note_id)
         if note:
-            new_state = not note.is_pinned
-            note.is_pinned = new_state
+            note.is_pinned = not note.is_pinned
+            state = note.is_pinned
             await session.commit()
-            return new_state
+            return state
     return False
 
 async def add_reminder(user_id: int, note_id: int, date: datetime):
@@ -84,28 +93,25 @@ async def get_notes_page(tg_id: int, page: int, limit=5, search_query=None):
     offset = (page - 1) * limit
     async with new_session() as session:
         query = select(Note).where(Note.user_id == tg_id)
-        
         if search_query:
             query = query.where(Note.content.ilike(f"%{search_query}%"))
         
-        # Сначала закрепленные, потом новые
+        # Сортировка: Сначала закреп, потом новые
         query = query.order_by(Note.is_pinned.desc(), Note.created_at.desc()).limit(limit).offset(offset)
         
         notes = await session.scalars(query)
         
-        # Считаем кол-во для пагинации
-        count_query = select(func.count(Note.id)).where(Note.user_id == tg_id)
-        if search_query:
-            count_query = count_query.where(Note.content.ilike(f"%{search_query}%"))
-        count = await session.scalar(count_query)
+        count_q = select(func.count(Note.id)).where(Note.user_id == tg_id)
+        if search_query: count_q = count_q.where(Note.content.ilike(f"%{search_query}%"))
+        count = await session.scalar(count_q)
         
         return notes.all(), count
 
 async def get_stats(tg_id: int):
     async with new_session() as session:
-        n_count = await session.scalar(select(func.count(Note.id)).where(Note.user_id == tg_id))
-        m_count = await session.scalar(select(func.count(Media.id)).where(Media.user_id == tg_id))
-        return n_count, m_count
+        n = await session.scalar(select(func.count(Note.id)).where(Note.user_id == tg_id))
+        m = await session.scalar(select(func.count(Media.id)).where(Media.user_id == tg_id))
+        return n, m
 
 async def get_note(note_id: int):
     async with new_session() as session:
