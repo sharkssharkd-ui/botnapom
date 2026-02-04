@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import os
+import pytz # ТАЙМЗОНА
+from datetime import datetime
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 
@@ -14,36 +16,38 @@ import database as db
 from handlers import router
 
 async def scheduler(bot: Bot):
+    msk = pytz.timezone('Europe/Moscow')
     while True:
         try:
-            reminders = await db.get_pending_reminders()
+            # Сравниваем время
+            now_msk = datetime.now(msk).replace(tzinfo=None)
+            reminders = await db.get_pending_reminders(now_msk)
+            
             for r, note in reminders:
                 try:
                     await bot.send_message(r.user_id, f"🔔 <b>Напоминание!</b>\n\n{note.content}", parse_mode="HTML")
-                    await db.mark_reminder_done(r.id)
+                    
+                    # ОБРАБОТКА ПОВТОРА (или удаление)
+                    await db.process_reminder_repeat(r.id)
+                    
                 except Exception as e:
-                    logging.error(f"Send Error: {e}")
+                    logging.error(f"Send err: {e}")
         except Exception as e:
-            logging.error(f"Scheduler Error: {e}")
+            logging.error(f"Sched err: {e}")
         await asyncio.sleep(60)
 
 async def main():
-    logging.basicConfig(level=logging.WARNING) # Меньше мусора в логах
-
+    logging.basicConfig(level=logging.WARNING)
     bot_token = os.getenv("BOT_TOKEN") or os.getenv("TOKEN")
-    if not bot_token:
-        print("❌ ОШИБКА: Нет токена!")
-        return
+    if not bot_token: return print("❌ Нет токена")
 
-    # Гарантируем создание таблиц
     await db.init_db()
     
     bot = Bot(token=bot_token)
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
 
-    print("🚀 Бот v3.0 запущен! (Меню под чатом)")
-    
+    print("🚀 Bot v4.0 Ultimate (MSK Timezone + Repeats)")
     asyncio.create_task(scheduler(bot))
     await dp.start_polling(bot)
 
