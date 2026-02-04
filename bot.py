@@ -2,9 +2,9 @@ import asyncio
 import logging
 import os
 from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
 
-# Попробуем подключить dotenv для локального запуска, 
-# но если его нет (как на хостинге), не страшно.
+# Попытка локальной загрузки
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -23,36 +23,27 @@ async def scheduler(bot: Bot):
                     await bot.send_message(r.user_id, f"🔔 <b>Напоминание!</b>\n\n{note.content}", parse_mode="HTML")
                     await db.mark_reminder_done(r.id)
                 except Exception as e:
-                    logging.error(f"Не смог отправить напоминание: {e}")
+                    logging.error(f"Failed to send reminder: {e}")
         except Exception as e:
-            logging.error(f"Ошибка в планировщике: {e}")
-        
+            logging.error(f"Scheduler error: {e}")
         await asyncio.sleep(60)
 
 async def main():
     logging.basicConfig(level=logging.INFO)
 
-    # 1. Пытаемся найти токен под именем BOT_TOKEN (стандарт)
-    bot_token = os.getenv("BOT_TOKEN")
-    
-    # 2. Если не нашли, пробуем имя TOKEN (иногда хостинги называют его так)
+    bot_token = os.getenv("BOT_TOKEN") or os.getenv("TOKEN")
     if not bot_token:
-        bot_token = os.getenv("TOKEN")
-
-    # 3. Если всё равно пусто — выводим ошибку
-    if not bot_token:
-        print("❌ ОШИБКА: Токен не найден! Проверь настройки 'Startup' на хостинге.")
-        # Для отладки можно раскомментировать следующую строку, чтобы увидеть все переменные (осторожно, не показывай никому логи!)
-        # print(os.environ) 
+        print("❌ ОШИБКА: Токен не найден!")
         return
 
     await db.init_db()
     
     bot = Bot(token=bot_token)
-    dp = Dispatcher()
+    # Важно: добавляем хранилище для состояний (поиск, редактирование)
+    dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
 
-    logging.info(f"✅ Бот запускается... Токен получен (длина: {len(bot_token)})")
+    logging.info("✅ Бот запущен v2.0")
     
     asyncio.create_task(scheduler(bot))
     await dp.start_polling(bot)
